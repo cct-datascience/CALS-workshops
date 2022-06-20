@@ -1,0 +1,284 @@
+---
+title: "Data Validation in Excel and R"
+author: "Eric R. Scott"
+date: "2022-08-24"
+format: 
+  html:
+    self-contained: true
+    toc: true
+    toc_float: true
+---
+
+## Overview
+
+There are many opportunities for human or instrument error to affect data.
+Ideally, you want to find those errors and fix them early and often!
+This workshop introduces some tools in Excel and R to avoid making mistakes in data entry and data collection, and to detect the ones you inadvertently make.
+
+## Learning Objectives
+
+-   Understand best practices for entering data and fixing errors in data
+
+-   Use Excel data validation tools to prevent data entry errors
+
+-   Compare data entered by two people in R to check for data entry mistakes
+
+-   Explore data summaries to check for errors
+
+-   Use the `pointblank` package to perform data validation checks
+
+::: callout-important
+## We are only interested in fixing verifiable mistakes! It is generally **not** appropriate to remove or edit outliers---extreme values that may or may not be accurate.
+:::
+
+## Software needed
+
+You'll need access to Excel, R, RStudio, and the following R packages:
+
+```{r}
+#| output: false
+library(tidyverse)
+library(visdat)
+library(pointblank)
+library(readxl)
+library(skimr)
+```
+
+## Avoiding mistakes in data entry
+
+Set up validation tools in your data entry spreadsheet to stop data entry errors in their tracks!
+
+![](https://c.tenor.com/Kt00_NI0XegAAAAC/gee-data-entry.gif){fig-alt="gif of cat typing furiously on a laptop" fig-align="center" width="300"}
+
+### Data Validation Tools in Excel
+
+![](images/validation-dialog.png){fig-alt="Data Validation dialog box in Excel.  Settings tab is shown with dropdown menu for Allow:" fig-align="center" width="300"}
+
+-   Select a column (or cells) and choose `Data > Validation …` from the menu
+
+-   Use "list" to restrict to specific values for categorical data
+
+-   Use "whole number" for count data
+
+-   Can also be set up *after* data entry.
+    Highlight invalid data with "Circle Invalid Data" from toolbar
+
+### Watch out for Excel autocorrect!
+
+::: {layout-ncol="2"}
+[![](images/nature-excel.png){fig-alt="Nature headline: \"Autocorrect errors in Excel still creating genomics headache.  Despite geneticists being warned about spreadsheet problems, 30% of published papers contain mangled gene names in supplementary data." width="530"}](https://www.nature.com/articles/d41586-021-02211-4)
+
+![](images/excel-meme.jpg){fig-alt="Confused anime guy with butterfly meme where the guy has a Microsoft Excel logo on his face, the butterfly is \"any data at all\" and the caption is \"is this a date?\"" width="200"}
+:::
+
+To stop Excel from converting entries to dates:
+
+1.  Explicitly set all column types to numeric, text, date, etc.
+
+2.  Make sure no columns are set to "general" ![](images/general-x.png){width="120"}
+
+### Double-entry Method
+
+-   Two people enter the same data, then compare programatically.
+
+-   In the `data` folder, there are two versions of a dataset---one entered by Eric and one entered by Jessica.
+
+```{r}
+eric <- read_excel("data/data_eric.xlsx")
+jessica <- read_excel("data/data_jessica.xlsx")
+```
+
+#### Compare visually with `visdat`
+
+We can compare them a couple of ways.
+First, we can compare them visually using the `visdat` package.
+This only works if the two datasets are the same dimensions.
+
+```{r}
+#| warning: false
+vis_compare(eric, jessica)
+```
+
+#### Compare with `dplyr::anti_join()`
+
+First add row numbers to make it easier to find mistakes in Excel.
+
+```{r}
+# add rownumbers that match Excel (headers are row 1)
+eric    <- eric    |> mutate(row = 2:(n()+1), .before = plot)
+jessica <- jessica |> mutate(row = 2:(n()+1), .before = plot)
+```
+
+`anti_join()` takes two data frames and returns only rows that differ between them.
+
+```{r}
+#values in `eric` that are different in `jessica`
+anti_join(eric, jessica)
+#values in `jessica` that are different in `eric`
+anti_join(jessica, eric)
+```
+
+Errors include:
+
+-   row 14: messy handwriting? (21 or 27)
+-   row 96: typo in flwr_2020
+-   row 121: discrepency in plot ID
+-   row 159: messy handwriting? (33 or 38)
+-   row 167 & 168: completely different rows
+-   row 225: missing data in Eric's version
+
+```{r}
+#after fixing data-entry errors, we get `data_resolved.csv`
+plants <- read_excel("data/data_resolved.xlsx")
+```
+
+## Explore data summaries
+
+-   You can't check for errors if you don't get to know your data!
+-   Use `skimr::skim()` to get a nicely formatted summary
+
+```{r}
+skimr::skim(plants)
+```
+
+## Explore data visually
+
+-   `visdat::vis_guess()` can help spot inconsistencies
+-   I'll change one of the plots to a number to demonstrate
+
+```{r}
+#change plot in the 10th row to "1"
+plants$plot[10] <- 1
+#doesn't change the type of the column
+class(plants$plot)
+#but vis_guess() spots the mistake!
+visdat::vis_guess(plants)
+```
+
+It also spots a decimal in the `ht_2000` column (but it's hard to see the green line)
+
+## Data validation pipelines with `pointblank`
+
+-   Correctly entered data could also contain mistakes in *recording* the data
+
+-   Likely ***impossible*** to know for sure if aberrant data are truly mistakes and not just extreme values, unless you can go back to the field to check.
+
+-   Can still flag unexpected values to double-check data sheets or in the field
+
+### The `pointblank` package
+
+```{r}
+library(pointblank)
+```
+
+-   `pointblank` provides 6 (six!) workflows for validating data
+
+-   The [Data Quality Reporting Workflow](https://rich-iannone.github.io/pointblank/articles/VALID-I.html) (VALID-1) is probably most useful for this group
+
+-   Start with a data frame, create an "agent", give it some validation functions, and let it "interrogate" your data!
+
+-   Output is a HTML table with CSV buttons to download any data that didn't pass your validations!
+
+### `pointblank` demo
+
+1.  Decide on "action levels". Can set a number or fraction of rows as a threshold for a warning or error
+
+```{r}
+al <- action_levels(warn_at = 1, stop_at = .02)
+al
+```
+
+2.  Create agent
+
+```{r}
+agent <- 
+  create_agent(
+    tbl = plants, #our data example from before
+    label = "plants 2000 & 2001",
+    actions = al
+  )
+```
+
+3.  Specify validation conditions
+
+    -   Basic checks on column types with `col_is_*()` functions
+    -   Check column values with `col_vals_*()` functions
+    -   Check rows (e.g. duplicate rows) with `rows_*()` functions
+
+```{r}
+agent_informed <- 
+  agent |> 
+  col_is_character(columns = plot) |>  #plot should be character
+  col_is_numeric(columns = c(shts_2000, shts_2001)) |> #shts should be numeric
+  
+  col_vals_in_set(columns = plot, set = LETTERS[1:10]) |> #plot should be A-E
+  col_vals_lt(  #expect shts < 5
+    columns = c(shts_2000, shts_2001), 
+    value =  5,
+    na_pass = TRUE
+  ) |> 
+  
+  rows_distinct(columns = vars(plant_id)) #no duplicate plant IDs
+
+#TODO: ^this should work with `columns = plant_id` but doesn't due to a bug:
+#https://github.com/rich-iannone/pointblank/issues/416
+#switch when bug gets fixed.
+```
+
+4.  Interrogate!
+
+```{r}
+#| column: body-outset
+
+agent_informed |> interrogate()
+```
+
+### Flexible validations
+
+If a validation function you need doesn't exist, you can use `col_vals_expr()`
+
+E.g. let's add a validation that height is measured to the nearest cm.
+
+```{r}
+#| column: body-outset
+agent_informed <-
+  agent_informed |> 
+  col_vals_expr(~ ht_2000 %% 1 == 0) |> 
+  col_vals_expr(~ ht_2001 %% 1 == 0) 
+
+agent_informed |> interrogate()
+```
+
+### Create new columns to test on the fly
+
+"preconditions" let you manipulate the data before a check is run within a single validation step.
+
+E.g. check that height doesn't change by more than 50 cm from 2000 to 2001
+
+```{r}
+#| column: body-outset
+agent_informed |> 
+  col_vals_lt(
+    columns = ht_change, #doesn't exist yet 
+    value = 50,
+    na_pass = TRUE,
+    # creates a new column on the fly:
+    preconditions = function(df) mutate(df, ht_change = ht_2001 - ht_2000)
+    ) |> 
+  interrogate()
+```
+
+### Publishing validation reports
+
+-   Students, faculty, and staff at University of Arizona have access to **RStudio Connect** which allows you to publish an RMarkdown document to the web with a single click.
+    ([Learn More](https://datascience.arizona.edu/analytics-powerhouse/rstudio-connect))
+
+-   Data validation can be automated in a variety of ways.
+    If you are interested in more advanced applications of data validation for your lab, [contact us](https://cct.cals.arizona.edu/contact)!
+
+## Help
+
+Feel free to drop by the [CCT Data Science Team office hours](https://datascience.cals.arizona.edu/office-hours), which happens every Tuesday morning.
+We would love to help you with your R questions about date/time, and more!
+
+You can also [make an appointment with Eric](https://calendar.google.com/calendar/appointments/schedules/AcZssZ0xpzu3Nlo0FCIAjFFktPFzyl5Aup9-1yErSy9y8_Iq2P6DWisiYc8PhUnn6l5z74D3OtgTRPSm) to discuss this content and get troubleshooting help.
